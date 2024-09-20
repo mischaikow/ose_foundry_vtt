@@ -1,0 +1,4 @@
+Stygous: HD 4; AC 6 [13]; Atk beak 1d10; Spec
+surprise 3:6, plucks out heart on max damage;
+ML 9; AL C.
+Hp 15

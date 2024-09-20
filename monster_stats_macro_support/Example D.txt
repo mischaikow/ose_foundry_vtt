@@ -1,0 +1,4 @@
++Undead Lords (1d10): HD 1; AC 7 [12]; Atk
+sword 1d6; ML 8; AL C; elegant but rotting
+clothing, 1d6 gp each.
+Hp 7

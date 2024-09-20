@@ -1,0 +1,7 @@
+Vincent Godefroy-Malévol: Thief 6; AC 8 [11];
+Atk cane sword 1d6 + poison; Spec backstab,
+thievery; ML 9; AL N; cane sword in walking
+stick, snuff box with secret compartment
+(3*poison), 1d3 books, pocket watch 500 gp,
+1d6*200 gp, letter of marque.
+Hp 25
