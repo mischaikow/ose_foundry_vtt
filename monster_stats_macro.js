@@ -1,4 +1,5 @@
 // Reformatted code from MaineQat posted in OSE foundry VTT discord
+// Done by doughnuts in OSE foundry VTT discord
 
 // No improvements made to original OSE importer:
 // Edited from previous OSE monster importers. Has issues with xp values of 4 digits or more, some attacks, other speed types, monsters without descriptions under thier names (like those in the Animals section).
@@ -184,7 +185,7 @@ const getHP = (stringArray) => {
 const getMonsterName = (stringArray) => {
   const [monsterName, temp_stat] = stringArray.shift().split(":");
   stringArray.push(temp_stat);
-  return monsterName;
+  return monsterName.replace(/[\[\(].*[\]\)]/, "").trim();
 };
 
 const createSemicolonMonster = (rawString) => {
@@ -195,12 +196,13 @@ const createSemicolonMonster = (rawString) => {
     ATT: "ATT",
     ATK: "ATT",
     ML: "ML",
-    Spec: "Spec",
     AL: "AL",
   };
 
   const newMonster = {
     stats: {},
+    abilities: [],
+    desc: "",
   };
 
   rawString = rawString.replaceAll("\n", " ");
@@ -211,22 +213,184 @@ const createSemicolonMonster = (rawString) => {
   newMonster["monsterName"] = getMonsterName(splitBySemicolon);
 
   splitBySemicolon.forEach((a_fact) => {
-    const firstWord = a_fact.substr(0, a_fact.indexOf(" "));
+    a_fact = a_fact.trim();
+    const firstWord = a_fact.substr(0, a_fact.indexOf(" ")).toUpperCase();
+
     if (firstWord in codes) {
-      newMonster.stats[codes[firstWord]] = a_fact.substr(
-        a_fact.indexOf(" ") + 1
-      );
+      if (firstWord === "AC" && /.+\[.+\]/.test(a_fact)) {
+        newMonster.stats["AC"] = a_fact.substring(
+          a_fact.indexOf("[") + 1,
+          a_fact.indexOf("]")
+        );
+      } else {
+        newMonster.stats[codes[firstWord]] = a_fact.substr(
+          a_fact.indexOf(" ") + 1
+        );
+      }
+    } else if (firstWord === "SPEC") {
+      const remainder_phrase = a_fact.substr(a_fact.indexOf(" ")).split(",");
+      remainder_phrase.forEach((phrase) => {
+        phrase = phrase.trim();
+        newMonster.abilities.push(phrase);
+      });
+    } else {
+      newMonster.desc = newMonster.desc.concat(a_fact);
     }
   });
-
-  console.log(newMonster);
 
   return newMonster;
 };
 
 // Parse the newfound knowledge
-const parseMonster = () => {
-  return;
+const parseMonster = async (name, desc, stats, abilities, folder) => {
+  if (name === null) {
+    ui.notifications.error("Name not detected");
+    return;
+  }
+  if (stats === null) {
+    ui.notifications.error("Stats not detected");
+    return;
+  }
+
+  const SaveRemapping = {
+    petrification: "paralysis",
+    poison: "death",
+    doom: "death",
+    death: "doom",
+    wands: "ray",
+    paralysis: "hold",
+    breathe: "blast",
+    spell: "spell",
+  };
+  const AttackPatternColorSequence = [
+    "green",
+    "red",
+    "yellow",
+    "purple",
+    "blue",
+    "orange",
+  ];
+
+  //  Default system
+  system = {
+    details: {},
+    hp: { hd: "1d8", value: 4, max: 4 },
+    movement: { base: 60, encounter: 20, value: "" },
+    thac0: { value: 19, bba: 0 },
+  };
+
+  // AC
+  system.ac = { value: 19 - stats.AC };
+  system.aac = { value: stats.AC };
+
+  system.hp.hd = stats.HD;
+  system.hp.max = stats.HP;
+  system.hp.value = stats.HP;
+  system.thac0.bba = stats.AB;
+
+  // MV
+  // system.exploration.ft = stats.MV;
+  system.movement.base = stats.MV;
+  system.movement.encounter = stats.MV;
+  system.movement.value = stats.MV;
+
+  // SV
+  system.saves = {
+    death: { value: /D(?<SV>\d+)/.exec(stats.SV)?.groups.SV || 19 },
+    wand: { value: /R(?<SV>\d+)/.exec(stats.SV)?.groups.SV || 19 },
+    paralysis: { value: /H(?<SV>\d+)/.exec(stats.SV)?.groups.SV || 19 },
+    breath: { value: /B(?<SV>\d+)/.exec(stats.SV)?.groups.SV || 19 },
+    spell: { value: /S(?<SV>\d+)/.exec(stats.SV)?.groups.SV || 19 },
+  };
+
+  //  Details
+  system.details.morale = parseInt(stats.ML?.trim());
+  system.details.alignment = stats.AL?.trim() || "Any";
+  system.details.xp = parseInt(stats.XP?.replace(/,/g, ""));
+
+  let biography = desc ? `<p>${desc}</p>\n<hr />\n` : "";
+
+  if (abilities.length) {
+    biography += "<hr />\n<ul>\n";
+    abilities.forEach((ability) => {
+      const ABILITY = /(?<NAME>[^:]+):\s*(?<DESC>.*)/.exec(ability);
+      if (ABILITY) {
+        biography += `<li>${ABILITY.groups.NAME}:&nbsp;${ABILITY.groups.DESC}</li>\n`;
+      }
+    });
+    biography += "</ul>\n";
+  }
+
+  system.details.biography = biography;
+
+  let actor = await Actor.create({
+    name: name,
+    type: "monster",
+    system: system,
+    folder: folder !== "" ? folder : null,
+  });
+
+  let abilityCount = 1;
+  for (const ability of abilities) {
+    const ABILITY = /(?<NAME>[^:]+):\s*(?<DESC>.*)/.exec(ability.trim());
+    if (!ABILITY) {
+      ABILITY = "Skill "
+        .concat(abilityCount.toString())
+        .concat(": ")
+        .concat(ability.trim());
+      abilityCount += 1;
+    } else {
+      const SAVE = /save (vs|versus) (?<SAVE>[bdpsw]\w+)/i.exec(
+        ABILITY.groups.DESC
+      )?.groups.SAVE;
+      const ROLL = /(?<ROLL>\d+d\d+([+-]\d+)?)/.exec(ABILITY.groups.DESC)
+        ?.groups.ROLL;
+    }
+
+    await actor.createEmbeddedDocuments("Item", [
+      {
+        name: ABILITY.groups.NAME.capitalize(),
+        type: "ability",
+        system: {
+          description: ABILITY?.groups.DESC,
+          save: SaveRemapping[SAVE] || SAVE || "",
+          roll: ROLL || "",
+          rollType: ROLL ? "above" : "result",
+        },
+      },
+    ]);
+  }
+
+  let attackPatternCount = 0;
+  for (const currAtt of stats.ATT.split("or")) {
+    const patternColor = AttackPatternColorSequence[attackPatternCount++];
+
+    for (const innerCurrAtt of currAtt.split("and")) {
+      let thisCurrAttReg =
+        /(?<COUNT>\d*|\s)\s(?<NAME>.*)\s\(\+(?<BONUS>\d+),\s(?<DICE>\d+d\d+)\)/.exec(
+          " " + innerCurrAtt.replace("[", "").replace("]", "")
+        );
+
+      const name = thisCurrAttReg.groups.NAME;
+      const count = parseInt(thisCurrAttReg.groups.COUNT || 1);
+      const damage = thisCurrAttReg.groups.DICE;
+
+      await actor.createEmbeddedDocuments("Item", [
+        {
+          name: name.trim().capitalize(),
+          type: "weapon",
+          system: {
+            damage: damage || "0",
+            save: "",
+            bonus: 0,
+            range: "",
+            counter: { max: count, value: count },
+            pattern: patternColor,
+          },
+        },
+      ]);
+    }
+  }
 };
 
 //// Execution block
@@ -235,5 +399,61 @@ const [raw_value, folder] = await promptMonsterInput();
 if (!raw_value) return;
 
 const monster = createMonsterFromString(raw_value);
+await parseMonster(
+  monster.monsterName,
+  monster.desc,
+  monster.stats,
+  monster.abilities,
+  folder
+);
 
-console.log(monster);
+//// Temp info
+const raw_value_a = `Crookhorn
+7′-tall, feral, disease-ridden breggles, twisted by the evil magic of their master, Atanuwë.
+Roam northern Dolmenwood as pillagers, brigands, and burners of villages.
+MeDiuM Mortal—sentient—chaotic
+Level 2 AC 13 HP 2d8 (9) Saves D12 R13 H14 B15 S16
+Attacks Weapon (+1) or bite (+1, 1d6 + disease)
+or horns (+1, 1d6 + disease)
+Speed 30 Morale 8 XP 35
+Encounters 3d10 (25% in lair)
+Behaviour Brutish, wild, merciless
+Speech Obscenity-laced bleating. Gaffe, basic Woldish (1-in-4 is fluent)
+Possessions 3d6sp Hoard C4 + R4 + M1
+Weapons: Crookhorns favour clubs (1d4) and spears (1d6).
+Armour: Crookhorns wear a rough patchwork of spiked
+leather and chainmail. Without armour, they have AC 11.
+Disease: Anyone who comes into close contact with a
+crookhorn (including being bitten or butted by one) must
+Save Versus Doom or be afflicted by a nasty infection (see
+Crookhorn Diseases). All can be cured with Lankswith
+(DPB).
+Marauders: Crookhorns delight in the capture, torture,
+and (inevitable) roasting of other sentients.`;
+
+const raw_value_b = `Stygous: HD 4; AC 6 [13]; Atk beak 1d10; Spec
+surprise 3:6, plucks out heart on max damage;
+ML 9; AL C.
+Hp 15`;
+
+const raw_value_c = `Vincent Godefroy-Malévol: Thief 6; AC 8 [11];
+Atk cane sword 1d6 + poison; Spec backstab,
+thievery; ML 9; AL N; cane sword in walking
+stick, snuff box with secret compartment
+(3*poison), 1d3 books, pocket watch 500 gp,
+1d6*200 gp, letter of marque.
+Hp 25`;
+
+const raw_value_d = `+Undead Lords (1d10): HD 1; AC 7 [12]; Atk
+sword 1d6; ML 8; AL C; elegant but rotting
+clothing, 1d6 gp each.
+Hp 7`;
+
+let monster_2 = createMonsterFromString(raw_value_a);
+console.log(monster_2);
+monster_2 = createMonsterFromString(raw_value_b);
+console.log(monster_2);
+monster_2 = createMonsterFromString(raw_value_c);
+console.log(monster_2);
+monster_2 = createMonsterFromString(raw_value_d);
+console.log(monster_2);
